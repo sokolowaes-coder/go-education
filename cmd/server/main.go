@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -17,8 +20,15 @@ func main() {
 	if dsn == "" {
 		log.Fatal("не задана переменная окружения DATABASE_URL")
 	}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-	ctx := context.Background()
+	// ctx отменяется по Ctrl+C (SIGINT) или docker stop (SIGTERM).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		log.Fatalf("подключение к БД: %v", err)
@@ -34,6 +44,27 @@ func main() {
 	mux := http.NewServeMux()
 	handler.Register(mux)
 
-	fmt.Println("Сервер запущен на http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf("Сервер запущен на http://localhost:%s", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("сервер: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Останавливаю сервер...")
+
+	// Даём текущим запросам до 10 секунд на завершение.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("остановка сервера: %v", err)
+	}
+	log.Println("Сервер остановлен")
 }

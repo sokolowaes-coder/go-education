@@ -4,15 +4,26 @@
 
 ## Запуск
 
-Нужны Go и Docker.
+Всё в Docker — база и API (http://localhost:8080):
 
 ```sh
-# база (таблица создаётся автоматически при первом запуске)
-docker compose up -d
+docker compose up -d --build   # собрать и запустить
+docker compose logs -f app     # логи сервера
+docker compose down            # остановить (данные БД сохраняются)
+docker compose down -v         # остановить и удалить данные
+```
 
-# сервер на http://localhost:8080
+Если порт 8080 занят: `APP_PORT=8081 docker compose up -d`.
+
+Для разработки — только база в Docker, сервер через `go run`:
+
+```sh
+docker compose up -d db
 DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go run ./cmd/server
 ```
+
+Переменные окружения сервера: `DATABASE_URL` (обязательна), `PORT` (по умолчанию `8080`).
+По Ctrl+C / `docker stop` сервер дожидается текущих запросов и завершается корректно.
 
 ## API
 
@@ -54,14 +65,18 @@ TEST_DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disabl
 
 Тесты хранилища работают во временной схеме и не трогают данные в базе.
 
+На каждый push в `main` GitHub Actions запускает gofmt, `go vet`, все тесты с Postgres и сборку Docker-образа ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
 ## Структура
 
 ```
-cmd/server/          точка входа: подключение к БД, запуск HTTP-сервера
+cmd/server/          точка входа: подключение к БД, HTTP-сервер, graceful shutdown
 internal/records/
   model.go           структура Record
   storage.go         SQL-запросы к Postgres
   handler.go         HTTP-хендлеры и роуты
 migrations/          SQL-схема базы
-docker-compose.yml   PostgreSQL для разработки (порт 5433)
+Dockerfile           сборка образа сервера (multi-stage, ~12 МБ)
+docker-compose.yml   PostgreSQL (порт 5433) + сервер (порт 8080)
+.github/workflows/   CI
 ```

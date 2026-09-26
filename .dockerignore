@@ -1,0 +1,6 @@
+.git
+.github
+/go-education
+*.md
+docker-compose.yml
+Dockerfile
