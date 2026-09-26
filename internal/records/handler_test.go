@@ -20,7 +20,7 @@ type fakeStore struct {
 func newFakeStore(names ...string) *fakeStore {
 	s := &fakeStore{nextID: 1}
 	for _, n := range names {
-		s.Create(context.Background(), n)
+		s.Create(context.Background(), RecordInput{Name: n})
 	}
 	return s
 }
@@ -46,23 +46,24 @@ func (s *fakeStore) GetByID(ctx context.Context, id int64) (Record, error) {
 	return Record{}, ErrNotFound
 }
 
-func (s *fakeStore) Create(ctx context.Context, name string) (Record, error) {
+func (s *fakeStore) Create(ctx context.Context, in RecordInput) (Record, error) {
 	if s.err != nil {
 		return Record{}, s.err
 	}
-	rec := Record{ID: s.nextID, Name: name, CreatedAt: time.Now()}
+	rec := Record{ID: s.nextID, Name: in.Name, Description: in.Description, CreatedAt: time.Now()}
 	s.nextID++
 	s.records = append(s.records, rec)
 	return rec, nil
 }
 
-func (s *fakeStore) Update(ctx context.Context, id int64, name string) (Record, error) {
+func (s *fakeStore) Update(ctx context.Context, id int64, in RecordInput) (Record, error) {
 	if s.err != nil {
 		return Record{}, s.err
 	}
 	for i := range s.records {
 		if s.records[i].ID == id {
-			s.records[i].Name = name
+			s.records[i].Name = in.Name
+			s.records[i].Description = in.Description
 			return s.records[i], nil
 		}
 	}
@@ -109,6 +110,7 @@ func TestHandlerStatusCodes(t *testing.T) {
 		{"id отрицательный", "GET", "/records/-1", "", http.StatusBadRequest},
 
 		{"создание", "POST", "/records", `{"name":"новая"}`, http.StatusCreated},
+		{"создание с описанием", "POST", "/records", `{"name":"новая","description":"текст"}`, http.StatusCreated},
 		{"создание: пустое имя", "POST", "/records", `{"name":""}`, http.StatusBadRequest},
 		{"создание: имя из пробелов", "POST", "/records", `{"name":"   "}`, http.StatusBadRequest},
 		{"создание: без name", "POST", "/records", `{}`, http.StatusBadRequest},
@@ -171,7 +173,7 @@ func TestGetListEmptyIsArray(t *testing.T) {
 
 func TestCreateReturnsRecord(t *testing.T) {
 	store := newFakeStore()
-	rec := do(t, store, "POST", "/records", `{"name":"новая"}`)
+	rec := do(t, store, "POST", "/records", `{"name":"новая","description":"описание"}`)
 
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q", ct)
@@ -180,7 +182,7 @@ func TestCreateReturnsRecord(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("ответ не JSON: %v", err)
 	}
-	if got.ID != 1 || got.Name != "новая" {
+	if got.ID != 1 || got.Name != "новая" || got.Description != "описание" {
 		t.Errorf("получили %+v", got)
 	}
 	if len(store.records) != 1 {
@@ -190,10 +192,10 @@ func TestCreateReturnsRecord(t *testing.T) {
 
 func TestUpdateChangesName(t *testing.T) {
 	store := newFakeStore("старая")
-	do(t, store, "PUT", "/records/1", `{"name":"новая"}`)
+	do(t, store, "PUT", "/records/1", `{"name":"новая","description":"описание"}`)
 
-	if store.records[0].Name != "новая" {
-		t.Errorf("имя = %q, ожидали \"новая\"", store.records[0].Name)
+	if got := store.records[0]; got.Name != "новая" || got.Description != "описание" {
+		t.Errorf("после изменения %+v", got)
 	}
 }
 

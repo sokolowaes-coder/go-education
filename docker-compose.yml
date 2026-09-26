@@ -9,7 +9,6 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql
-      - ./migrations/000001_create_records.up.sql:/docker-entrypoint-initdb.d/000001_create_records.up.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d go_education"]
       interval: 2s

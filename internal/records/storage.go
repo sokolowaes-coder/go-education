@@ -19,7 +19,7 @@ func NewStorage(db *pgxpool.Pool) *Storage {
 }
 
 func (s *Storage) GetList(ctx context.Context) ([]Record, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, name, created_at FROM records ORDER BY id`)
+	rows, err := s.db.Query(ctx, `SELECT id, name, description, created_at FROM records ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -36,30 +36,32 @@ func (s *Storage) GetList(ctx context.Context) ([]Record, error) {
 func (s *Storage) GetByID(ctx context.Context, id int64) (Record, error) {
 	var rec Record
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, created_at FROM records WHERE id = $1`,
+		`SELECT id, name, description, created_at FROM records WHERE id = $1`,
 		id,
-	).Scan(&rec.ID, &rec.Name, &rec.CreatedAt)
+	).Scan(&rec.ID, &rec.Name, &rec.Description, &rec.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	return rec, err
 }
 
-func (s *Storage) Create(ctx context.Context, name string) (Record, error) {
+func (s *Storage) Create(ctx context.Context, in RecordInput) (Record, error) {
 	var rec Record
 	err := s.db.QueryRow(ctx,
-		`INSERT INTO records (name) VALUES ($1) RETURNING id, name, created_at`,
-		name,
-	).Scan(&rec.ID, &rec.Name, &rec.CreatedAt)
+		`INSERT INTO records (name, description) VALUES ($1, $2)
+		 RETURNING id, name, description, created_at`,
+		in.Name, in.Description,
+	).Scan(&rec.ID, &rec.Name, &rec.Description, &rec.CreatedAt)
 	return rec, err
 }
 
-func (s *Storage) Update(ctx context.Context, id int64, name string) (Record, error) {
+func (s *Storage) Update(ctx context.Context, id int64, in RecordInput) (Record, error) {
 	var rec Record
 	err := s.db.QueryRow(ctx,
-		`UPDATE records SET name = $2 WHERE id = $1 RETURNING id, name, created_at`,
-		id, name,
-	).Scan(&rec.ID, &rec.Name, &rec.CreatedAt)
+		`UPDATE records SET name = $2, description = $3 WHERE id = $1
+		 RETURNING id, name, description, created_at`,
+		id, in.Name, in.Description,
+	).Scan(&rec.ID, &rec.Name, &rec.Description, &rec.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}

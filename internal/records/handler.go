@@ -13,8 +13,8 @@ import (
 type RecordStore interface {
 	GetList(ctx context.Context) ([]Record, error)
 	GetByID(ctx context.Context, id int64) (Record, error)
-	Create(ctx context.Context, name string) (Record, error)
-	Update(ctx context.Context, id int64, name string) (Record, error)
+	Create(ctx context.Context, in RecordInput) (Record, error)
+	Update(ctx context.Context, id int64, in RecordInput) (Record, error)
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -55,11 +55,11 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	name, ok := decodeName(w, r)
+	in, ok := decodeInput(w, r)
 	if !ok {
 		return
 	}
-	rec, err := h.storage.Create(r.Context(), name)
+	rec, err := h.storage.Create(r.Context(), in)
 	if err != nil {
 		internalError(w, "create record", err)
 		return
@@ -72,11 +72,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	name, ok := decodeName(w, r)
+	in, ok := decodeInput(w, r)
 	if !ok {
 		return
 	}
-	rec, err := h.storage.Update(r.Context(), id, name)
+	rec, err := h.storage.Update(r.Context(), id, in)
 	if errors.Is(err, ErrNotFound) {
 		http.Error(w, "запись не найдена", http.StatusNotFound)
 		return
@@ -122,20 +122,18 @@ func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return id, true
 }
 
-func decodeName(w http.ResponseWriter, r *http.Request) (string, bool) {
+func decodeInput(w http.ResponseWriter, r *http.Request) (RecordInput, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var in RecordInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "неверный JSON", http.StatusBadRequest)
-		return "", false
+		return RecordInput{}, false
 	}
-	if strings.TrimSpace(req.Name) == "" {
+	if strings.TrimSpace(in.Name) == "" {
 		http.Error(w, "name обязателен", http.StatusBadRequest)
-		return "", false
+		return RecordInput{}, false
 	}
-	return req.Name, true
+	return in, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

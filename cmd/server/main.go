@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-education/internal/records"
+	"go-education/migrations"
 )
 
 func main() {
@@ -28,6 +29,11 @@ func main() {
 	// ctx отменяется по Ctrl+C (SIGINT) или docker stop (SIGTERM).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if err := migrations.Up(dsn); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Миграции применены")
 
 	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {

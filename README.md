@@ -30,17 +30,19 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 | Метод    | Путь            | Тело               | Ответ                        |
 |----------|-----------------|--------------------|------------------------------|
 | `GET`    | `/records`      | —                  | `200` список записей         |
-| `POST`   | `/records`      | `{"name":"..."}`   | `201` созданная запись       |
+| `POST`   | `/records`      | `{"name":"...", "description":"..."}` | `201` созданная запись |
 | `GET`    | `/records/{id}` | —                  | `200` запись                 |
-| `PUT`    | `/records/{id}` | `{"name":"..."}`   | `200` обновлённая запись     |
+| `PUT`    | `/records/{id}` | `{"name":"...", "description":"..."}` | `200` обновлённая запись |
 | `DELETE` | `/records/{id}` | —                  | `204` без тела               |
+
+`name` обязателен, `description` — нет (по умолчанию пустая строка). `PUT` заменяет оба поля.
 
 Ошибки: `400` — неверный id, JSON или пустое имя; `404` — записи нет; `500` — ошибка сервера.
 
 Запись:
 
 ```json
-{"id": 1, "name": "первая", "created_at": "2026-09-26T23:33:25.360074+03:00"}
+{"id": 1, "name": "первая", "description": "", "created_at": "2026-09-26T23:33:25.360074+03:00"}
 ```
 
 Примеры:
@@ -52,6 +54,21 @@ curl -i localhost:8080/records/1
 curl -i -X PUT localhost:8080/records/1 -d '{"name":"изменённая"}'
 curl -i -X DELETE localhost:8080/records/1
 ```
+
+## Миграции
+
+SQL-миграции лежат в [migrations/](migrations/) и встроены в бинарник (`embed`).
+При старте сервер сам применяет новые через [golang-migrate](https://github.com/golang-migrate/migrate);
+применённые версии хранятся в таблице `schema_migrations`.
+
+Чтобы изменить схему, добавь пару файлов со следующим номером:
+
+```
+migrations/000003_что_делает.up.sql     -- изменение
+migrations/000003_что_делает.down.sql   -- откат
+```
+
+Уже применённые миграции не редактируй — только добавляй новые.
 
 ## Тесты
 
@@ -75,7 +92,7 @@ internal/records/
   model.go           структура Record
   storage.go         SQL-запросы к Postgres
   handler.go         HTTP-хендлеры и роуты
-migrations/          SQL-схема базы
+migrations/          SQL-миграции + код их применения
 Dockerfile           сборка образа сервера (multi-stage, ~12 МБ)
 docker-compose.yml   PostgreSQL (порт 5433) + сервер (порт 8080)
 .github/workflows/   CI

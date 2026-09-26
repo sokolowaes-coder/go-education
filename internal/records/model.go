@@ -3,7 +3,14 @@ package records
 import "time"
 
 type Record struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// RecordInput — поля, которые клиент передаёт при создании и изменении записи.
+type RecordInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
