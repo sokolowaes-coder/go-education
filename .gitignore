@@ -1,3 +1,5 @@
 /go-education
 .DS_Store
 .env
+.vercel
+.env*

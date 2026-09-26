@@ -108,15 +108,14 @@ curl -i -X DELETE localhost:8080/records/1
 
 ## Деплой на Vercel
 
-Vercel запускает приложение как serverless-функцию [api/index.go](api/index.go): все пути
-перенаправляются в неё ([vercel.json](vercel.json)), дальше работает тот же роутер, что и в Docker.
-Приложение собирается при первом запросе и переиспользуется, пока экземпляр функции жив.
+Vercel сам распознаёт Go-сервер ([cmd/server](cmd/server/main.go)) и запускает его как обычный
+долгоживущий процесс — отдельной конфигурации не нужно. Порт Vercel передаёт через `PORT`.
 
 1. [vercel.com/new](https://vercel.com/new) → импортировать репозиторий, настройки по умолчанию.
 2. В проекте: **Storage → Create Database → Neon** (Postgres) → подключить к проекту.
    Vercel сам добавит `DATABASE_URL` и `DATABASE_URL_UNPOOLED`.
 3. **Settings → Environment Variables**: `APP_TZ` = `Europe/Moscow`.
-4. **Deployments → Redeploy**. Миграции применятся при первом запросе.
+4. **Deployments → Redeploy**. Миграции применятся при старте.
 
 Дальше каждый push в `main` деплоится автоматически.
 
@@ -163,9 +162,8 @@ TEST_DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disabl
 ## Структура
 
 ```
-cmd/server/          точка входа для Docker: HTTP-сервер, graceful shutdown
-api/index.go         точка входа для Vercel (serverless-функция)
-internal/app/         сборка приложения: миграции, БД, роуты (общая для сервера и Vercel)
+cmd/server/          точка входа: HTTP-сервер, graceful shutdown (Docker и Vercel)
+internal/app/        сборка приложения: миграции, БД, роуты, middleware
 internal/middleware/ логирование запросов, recover от паник
 internal/health/     /healthz и проверка для Docker
 internal/records/
