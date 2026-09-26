@@ -1,6 +1,7 @@
 package records
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -9,11 +10,21 @@ import (
 	"strings"
 )
 
-type Handler struct {
-	storage *Storage
+type RecordStore interface {
+	GetList(ctx context.Context) ([]Record, error)
+	GetByID(ctx context.Context, id int64) (Record, error)
+	Create(ctx context.Context, name string) (Record, error)
+	Update(ctx context.Context, id int64, name string) (Record, error)
+	Delete(ctx context.Context, id int64) error
 }
 
-func NewHandler(storage *Storage) *Handler {
+var _ RecordStore = (*Storage)(nil)
+
+type Handler struct {
+	storage RecordStore
+}
+
+func NewHandler(storage RecordStore) *Handler {
 	return &Handler{storage: storage}
 }
 
