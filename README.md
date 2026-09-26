@@ -30,7 +30,8 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 | `PORT`         | `8080`       | порт HTTP-сервера                         |
 | `LOG_LEVEL`    | `info`       | `debug`, `info`, `warn`, `error`          |
 | `LOG_FORMAT`   | текст        | `json` — логи в JSON                      |
-| `TZ`           | системный    | часовой пояс для дат в фильтрах, напр. `Europe/Moscow` |
+| `APP_TZ`       | системный    | часовой пояс для дат в фильтрах, напр. `Europe/Moscow` |
+| `DATABASE_URL_UNPOOLED` | —   | прямое подключение для миграций, если `DATABASE_URL` идёт через пулер |
 
 По Ctrl+C / `docker stop` сервер дожидается текущих запросов и завершается корректно.
 
@@ -64,7 +65,7 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 | `limit`          | `20`                            | размер страницы, 1–100 (по умолчанию 20)        |
 | `offset`         | `0`                             | сколько записей пропустить                      |
 
-Даты без пояса считаются в часовом поясе сервера (`TZ`, в Docker — `Europe/Moscow`); можно передать и с поясом: `2026-09-27T10:00:00+03:00`.
+Даты без пояса считаются в часовом поясе `APP_TZ` (в Docker — `Europe/Moscow`); можно передать и с поясом: `2026-09-27T10:00:00+03:00`.
 
 ```sh
 curl 'localhost:8080/records?fullText=лазер&dateStart=2026-09-27&dateEnd=2026-09-27&limit=10'
@@ -104,6 +105,20 @@ curl -i localhost:8080/records/1
 curl -i -X PUT localhost:8080/records/1 -d '{"name":"изменённая"}'
 curl -i -X DELETE localhost:8080/records/1
 ```
+
+## Деплой на Vercel
+
+Vercel запускает приложение как serverless-функцию [api/index.go](api/index.go): все пути
+перенаправляются в неё ([vercel.json](vercel.json)), дальше работает тот же роутер, что и в Docker.
+Приложение собирается при первом запросе и переиспользуется, пока экземпляр функции жив.
+
+1. [vercel.com/new](https://vercel.com/new) → импортировать репозиторий, настройки по умолчанию.
+2. В проекте: **Storage → Create Database → Neon** (Postgres) → подключить к проекту.
+   Vercel сам добавит `DATABASE_URL` и `DATABASE_URL_UNPOOLED`.
+3. **Settings → Environment Variables**: `APP_TZ` = `Europe/Moscow`.
+4. **Deployments → Redeploy**. Миграции применятся при первом запросе.
+
+Дальше каждый push в `main` деплоится автоматически.
 
 ## Логи и health-check
 
@@ -148,7 +163,9 @@ TEST_DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disabl
 ## Структура
 
 ```
-cmd/server/          точка входа: подключение к БД, HTTP-сервер, graceful shutdown
+cmd/server/          точка входа для Docker: HTTP-сервер, graceful shutdown
+api/index.go         точка входа для Vercel (serverless-функция)
+internal/app/         сборка приложения: миграции, БД, роуты (общая для сервера и Vercel)
 internal/middleware/ логирование запросов, recover от паник
 internal/health/     /healthz и проверка для Docker
 internal/records/

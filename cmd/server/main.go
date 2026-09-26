@@ -11,12 +11,8 @@ import (
 	"time"
 	_ "time/tzdata" // база часовых поясов внутри бинарника: в distroless-образе её нет
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"go-education/internal/app"
 	"go-education/internal/health"
-	"go-education/internal/middleware"
-	"go-education/internal/records"
-	"go-education/migrations"
 )
 
 func main() {
@@ -34,7 +30,7 @@ func main() {
 		return
 	}
 
-	logger := newLogger()
+	logger := app.NewLogger()
 	slog.SetDefault(logger)
 
 	if err := run(port, logger); err != nil {
@@ -44,40 +40,23 @@ func main() {
 }
 
 func run(port string, logger *slog.Logger) error {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return errors.New("не задана переменная окружения DATABASE_URL")
-	}
-
 	// ctx отменяется по Ctrl+C (SIGINT) или docker stop (SIGTERM).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := migrations.Up(dsn); err != nil {
-		return err
-	}
-	logger.Info("миграции применены", "tz", time.Local.String())
-
-	db, err := pgxpool.New(ctx, dsn)
+	cfg, err := app.ConfigFromEnv(logger)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	if err := db.Ping(ctx); err != nil {
+	handler, closeDB, err := app.New(ctx, cfg)
+	if err != nil {
 		return err
 	}
-
-	mux := http.NewServeMux()
-	// time.Local берётся из переменной TZ (например, Europe/Moscow).
-	records.NewHandler(records.NewStorage(db), time.Local).Register(mux)
-	mux.HandleFunc("GET /healthz", health.Handler(db))
+	defer closeDB()
 
 	srv := &http.Server{
-		Addr: ":" + port,
-		Handler: middleware.Chain(mux,
-			middleware.Logging(logger),
-			middleware.Recover(logger),
-		),
+		Addr:              ":" + port,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -104,18 +83,4 @@ func run(port string, logger *slog.Logger) error {
 	}
 	logger.Info("сервер остановлен")
 	return nil
-}
-
-// newLogger: LOG_LEVEL=debug|info|warn|error (по умолчанию info),
-// LOG_FORMAT=json для машинного формата (по умолчанию текст).
-func newLogger() *slog.Logger {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(os.Getenv("LOG_LEVEL"))); err != nil {
-		level = slog.LevelInfo
-	}
-	opts := &slog.HandlerOptions{Level: level}
-	if os.Getenv("LOG_FORMAT") == "json" {
-		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
-	}
-	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
