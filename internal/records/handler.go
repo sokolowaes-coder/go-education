@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -143,6 +143,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func internalError(w http.ResponseWriter, op string, err error) {
-	log.Printf("%s: %v", op, err)
+	slog.Error(op, "error", err)
 	http.Error(w, "внутренняя ошибка", http.StatusInternalServerError)
 }

@@ -22,7 +22,15 @@ docker compose up -d db
 DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go run ./cmd/server
 ```
 
-Переменные окружения сервера: `DATABASE_URL` (обязательна), `PORT` (по умолчанию `8080`).
+Переменные окружения сервера:
+
+| Переменная     | По умолчанию | Описание                                  |
+|----------------|--------------|-------------------------------------------|
+| `DATABASE_URL` | —            | строка подключения к Postgres (обязательна) |
+| `PORT`         | `8080`       | порт HTTP-сервера                         |
+| `LOG_LEVEL`    | `info`       | `debug`, `info`, `warn`, `error`          |
+| `LOG_FORMAT`   | текст        | `json` — логи в JSON                      |
+
 По Ctrl+C / `docker stop` сервер дожидается текущих запросов и завершается корректно.
 
 ## API
@@ -34,6 +42,7 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 | `GET`    | `/records/{id}` | —                  | `200` запись                 |
 | `PUT`    | `/records/{id}` | `{"name":"...", "description":"..."}` | `200` обновлённая запись |
 | `DELETE` | `/records/{id}` | —                  | `204` без тела               |
+| `GET`    | `/healthz`      | —                  | `200` `{"status":"ok"}` / `503`, если БД недоступна |
 
 `name` обязателен, `description` — нет (по умолчанию пустая строка). `PUT` заменяет оба поля.
 
@@ -54,6 +63,17 @@ curl -i localhost:8080/records/1
 curl -i -X PUT localhost:8080/records/1 -d '{"name":"изменённая"}'
 curl -i -X DELETE localhost:8080/records/1
 ```
+
+## Логи и health-check
+
+Каждый запрос пишется в лог ([slog](https://pkg.go.dev/log/slog)):
+
+```
+level=INFO msg=request method=POST path=/records status=201 duration=944µs
+```
+
+Паника в хендлере не роняет соединение: клиент получает `500`, в лог — ошибка со стеком.
+Docker проверяет контейнер через `/server healthcheck` (запрос к `/healthz`) — статус виден в `docker compose ps`.
 
 ## Миграции
 
@@ -88,6 +108,8 @@ TEST_DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disabl
 
 ```
 cmd/server/          точка входа: подключение к БД, HTTP-сервер, graceful shutdown
+internal/middleware/ логирование запросов, recover от паник
+internal/health/     /healthz и проверка для Docker
 internal/records/
   model.go           структура Record
   storage.go         SQL-запросы к Postgres
