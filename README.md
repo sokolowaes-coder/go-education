@@ -30,6 +30,7 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 | `PORT`         | `8080`       | порт HTTP-сервера                         |
 | `LOG_LEVEL`    | `info`       | `debug`, `info`, `warn`, `error`          |
 | `LOG_FORMAT`   | текст        | `json` — логи в JSON                      |
+| `TZ`           | системный    | часовой пояс для дат в фильтрах, напр. `Europe/Moscow` |
 
 По Ctrl+C / `docker stop` сервер дожидается текущих запросов и завершается корректно.
 
@@ -37,7 +38,7 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 
 | Метод    | Путь            | Тело               | Ответ                        |
 |----------|-----------------|--------------------|------------------------------|
-| `GET`    | `/records`      | —                  | `200` список записей         |
+| `GET`    | `/records`      | —                  | `200` список с фильтрами (см. ниже) |
 | `POST`   | `/records`      | `{"name":"...", "description":"..."}` | `201` созданная запись |
 | `GET`    | `/records/{id}` | —                  | `200` запись                 |
 | `PUT`    | `/records/{id}` | `{"name":"...", "description":"..."}` | `200` обновлённая запись |
@@ -46,7 +47,47 @@ DATABASE_URL="postgres://app:app@localhost:5433/go_education?sslmode=disable" go
 
 `name` обязателен, `description` — нет (по умолчанию пустая строка). `PUT` заменяет оба поля.
 
-Ошибки: `400` — неверный id, JSON или пустое имя; `404` — записи нет; `500` — ошибка сервера.
+Ошибки: `400` — неверный id, JSON, фильтр или пустое имя; `404` — записи нет; `500` — ошибка сервера.
+Тело ошибки всегда JSON: `{"success": false, "error": "запись не найдена"}`.
+
+### Список: фильтры и пагинация
+
+`GET /records` принимает query-параметры, все необязательные:
+
+| Параметр         | Пример                          | Что делает                                      |
+|------------------|---------------------------------|-------------------------------------------------|
+| `fullText`       | `лазер`                         | поиск подстроки без учёта регистра              |
+| `fullTextFields` | `name` или `name,description`   | где искать (по умолчанию — везде)               |
+| `id`             | `1,2,3` или `id=1&id=2`         | только записи с этими id                        |
+| `dateStart`      | `2026-09-27` / `2026-09-27T10:00:00` | `created_at` не раньше                     |
+| `dateEnd`        | `2026-09-27`                    | `created_at` не позже; дата без времени — до конца дня |
+| `limit`          | `20`                            | размер страницы, 1–100 (по умолчанию 20)        |
+| `offset`         | `0`                             | сколько записей пропустить                      |
+
+Даты без пояса считаются в часовом поясе сервера (`TZ`, в Docker — `Europe/Moscow`); можно передать и с поясом: `2026-09-27T10:00:00+03:00`.
+
+```sh
+curl 'localhost:8080/records?fullText=лазер&dateStart=2026-09-27&dateEnd=2026-09-27&limit=10'
+```
+
+```json
+{
+  "success": true,
+  "filters": {
+    "fullText":  {"value": "лазер", "fields": null},
+    "id":        {"value": null},
+    "dateStart": {"value": "2026-09-27T00:00:00"},
+    "dateEnd":   {"value": "2026-09-27T23:59:59"}
+  },
+  "count": 1,
+  "pagination": {"limit": 10, "offset": 0},
+  "data": [
+    {"id": 7, "name": "Лазерная депиляция", "description": "", "created_at": "2026-09-27T08:00:00Z"}
+  ]
+}
+```
+
+`filters` показывает, какие фильтры применились (`null` — не задан), `count` — сколько записей подходит всего, `data` — текущая страница.
 
 Запись:
 
@@ -112,6 +153,7 @@ internal/middleware/ логирование запросов, recover от па�
 internal/health/     /healthz и проверка для Docker
 internal/records/
   model.go           структура Record
+  filter.go          фильтры списка и формат ответа
   storage.go         SQL-запросы к Postgres
   handler.go         HTTP-хендлеры и роуты
 migrations/          SQL-миграции + код их применения

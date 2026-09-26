@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // база часовых поясов внутри бинарника: в distroless-образе её нет
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -55,7 +56,7 @@ func run(port string, logger *slog.Logger) error {
 	if err := migrations.Up(dsn); err != nil {
 		return err
 	}
-	logger.Info("миграции применены")
+	logger.Info("миграции применены", "tz", time.Local.String())
 
 	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -67,7 +68,8 @@ func run(port string, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	records.NewHandler(records.NewStorage(db)).Register(mux)
+	// time.Local берётся из переменной TZ (например, Europe/Moscow).
+	records.NewHandler(records.NewStorage(db), time.Local).Register(mux)
 	mux.HandleFunc("GET /healthz", health.Handler(db))
 
 	srv := &http.Server{

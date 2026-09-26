@@ -8,10 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type RecordStore interface {
-	GetList(ctx context.Context) ([]Record, error)
+	List(ctx context.Context, f ListFilter) ([]Record, int, error)
 	GetByID(ctx context.Context, id int64) (Record, error)
 	Create(ctx context.Context, in RecordInput) (Record, error)
 	Update(ctx context.Context, id int64, in RecordInput) (Record, error)
@@ -22,19 +23,25 @@ var _ RecordStore = (*Storage)(nil)
 
 type Handler struct {
 	storage RecordStore
+	loc     *time.Location // пояс для дат без пояса в фильтрах
 }
 
-func NewHandler(storage RecordStore) *Handler {
-	return &Handler{storage: storage}
+func NewHandler(storage RecordStore, loc *time.Location) *Handler {
+	return &Handler{storage: storage, loc: loc}
 }
 
-func (h *Handler) GetList(w http.ResponseWriter, r *http.Request) {
-	records, err := h.storage.GetList(r.Context())
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	f, err := ParseListFilter(r.URL.Query(), h.loc)
 	if err != nil {
-		internalError(w, "get records", err)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, records)
+	records, total, err := h.storage.List(r.Context(), f)
+	if err != nil {
+		internalError(w, "list records", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newListResponse(f, records, total, h.loc))
 }
 
 func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +51,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := h.storage.GetByID(r.Context(), id)
 	if errors.Is(err, ErrNotFound) {
-		http.Error(w, "запись не найдена", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "запись не найдена")
 		return
 	}
 	if err != nil {
@@ -78,7 +85,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := h.storage.Update(r.Context(), id, in)
 	if errors.Is(err, ErrNotFound) {
-		http.Error(w, "запись не найдена", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "запись не найдена")
 		return
 	}
 	if err != nil {
@@ -95,7 +102,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	err := h.storage.Delete(r.Context(), id)
 	if errors.Is(err, ErrNotFound) {
-		http.Error(w, "запись не найдена", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "запись не найдена")
 		return
 	}
 	if err != nil {
@@ -106,7 +113,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /records", h.GetList)
+	mux.HandleFunc("GET /records", h.List)
 	mux.HandleFunc("POST /records", h.Create)
 	mux.HandleFunc("GET /records/{id}", h.GetByID)
 	mux.HandleFunc("PUT /records/{id}", h.Update)
@@ -116,7 +123,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		http.Error(w, "неверный id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "неверный id")
 		return 0, false
 	}
 	return id, true
@@ -126,11 +133,11 @@ func decodeInput(w http.ResponseWriter, r *http.Request) (RecordInput, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var in RecordInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, "неверный JSON", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "неверный JSON")
 		return RecordInput{}, false
 	}
 	if strings.TrimSpace(in.Name) == "" {
-		http.Error(w, "name обязателен", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name обязателен")
 		return RecordInput{}, false
 	}
 	return in, true
@@ -144,5 +151,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func internalError(w http.ResponseWriter, op string, err error) {
 	slog.Error(op, "error", err)
-	http.Error(w, "внутренняя ошибка", http.StatusInternalServerError)
+	writeError(w, http.StatusInternalServerError, "внутренняя ошибка")
+}
+
+// writeError отвечает в едином формате ошибок: {"success": false, "error": "..."}.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]any{"success": false, "error": msg})
 }

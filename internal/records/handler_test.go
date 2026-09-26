@@ -12,9 +12,10 @@ import (
 )
 
 type fakeStore struct {
-	records []Record
-	nextID  int64
-	err     error
+	records    []Record
+	nextID     int64
+	err        error
+	lastFilter ListFilter // с какими фильтрами вызвали List
 }
 
 func newFakeStore(names ...string) *fakeStore {
@@ -25,13 +26,18 @@ func newFakeStore(names ...string) *fakeStore {
 	return s
 }
 
-func (s *fakeStore) GetList(ctx context.Context) ([]Record, error) {
+// List в фейке только применяет пагинацию: сами фильтры проверяются
+// в тестах хранилища на настоящей БД.
+func (s *fakeStore) List(ctx context.Context, f ListFilter) ([]Record, int, error) {
+	s.lastFilter = f
 	if s.err != nil {
-		return nil, s.err
+		return nil, 0, s.err
 	}
-	out := make([]Record, len(s.records))
-	copy(out, s.records)
-	return out, nil
+	start := min(f.Offset, len(s.records))
+	end := min(start+f.Limit, len(s.records))
+	out := make([]Record, end-start)
+	copy(out, s.records[start:end])
+	return out, len(s.records), nil
 }
 
 func (s *fakeStore) GetByID(ctx context.Context, id int64) (Record, error) {
@@ -88,7 +94,7 @@ func (s *fakeStore) Delete(ctx context.Context, id int64) error {
 func do(t *testing.T, store RecordStore, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	NewHandler(store).Register(mux)
+	NewHandler(store, time.UTC).Register(mux)
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -164,10 +170,90 @@ func TestHandlerStoreError(t *testing.T) {
 	}
 }
 
-func TestGetListEmptyIsArray(t *testing.T) {
+func TestListEmptyDataIsArray(t *testing.T) {
 	rec := do(t, newFakeStore(), "GET", "/records", "")
-	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
-		t.Errorf("тело = %q, ожидали []", got)
+	if !strings.Contains(rec.Body.String(), `"data":[]`) {
+		t.Errorf("пустой список должен быть \"data\":[], тело: %s", rec.Body)
+	}
+}
+
+func TestListResponseFormat(t *testing.T) {
+	store := newFakeStore("первая", "вторая", "третья")
+	rec := do(t, store, "GET", "/records?fullText=вто&id=2,3&dateStart=2026-09-27&dateEnd=2026-09-27&limit=2&offset=1", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("статус = %d; тело: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Success bool `json:"success"`
+		Filters struct {
+			FullText  struct{ Value *string } `json:"fullText"`
+			ID        struct{ Value []int64 } `json:"id"`
+			DateStart struct{ Value *string } `json:"dateStart"`
+			DateEnd   struct{ Value *string } `json:"dateEnd"`
+		} `json:"filters"`
+		Count      int        `json:"count"`
+		Pagination Pagination `json:"pagination"`
+		Data       []Record   `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Success || got.Count != 3 || len(got.Data) != 2 || got.Data[0].Name != "вторая" {
+		t.Errorf("success=%v count=%d data=%+v", got.Success, got.Count, got.Data)
+	}
+	if got.Pagination != (Pagination{Limit: 2, Offset: 1}) {
+		t.Errorf("pagination = %+v", got.Pagination)
+	}
+	f := got.Filters
+	if f.FullText.Value == nil || *f.FullText.Value != "вто" {
+		t.Errorf("fullText = %v", f.FullText.Value)
+	}
+	if len(f.ID.Value) != 2 || f.ID.Value[0] != 2 || f.ID.Value[1] != 3 {
+		t.Errorf("id = %v", f.ID.Value)
+	}
+	if f.DateStart.Value == nil || *f.DateStart.Value != "2026-09-27T00:00:00" {
+		t.Errorf("dateStart = %v", f.DateStart.Value)
+	}
+	if f.DateEnd.Value == nil || *f.DateEnd.Value != "2026-09-27T23:59:59" {
+		t.Errorf("dateEnd = %v", f.DateEnd.Value)
+	}
+}
+
+func TestListUnsetFiltersAreNull(t *testing.T) {
+	rec := do(t, newFakeStore(), "GET", "/records", "")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"fullText":{"value":null,"fields":null}`,
+		`"id":{"value":null}`,
+		`"dateStart":{"value":null}`,
+		`"dateEnd":{"value":null}`,
+		`"pagination":{"limit":20,"offset":0}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в ответе нет %s\nтело: %s", want, body)
+		}
+	}
+}
+
+func TestListBadFilter(t *testing.T) {
+	rec := do(t, newFakeStore(), "GET", "/records?limit=1000", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("статус = %d, ожидали 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"success":false`) || !strings.Contains(rec.Body.String(), "limit") {
+		t.Errorf("тело = %s", rec.Body)
+	}
+}
+
+func TestErrorsAreJSON(t *testing.T) {
+	rec := do(t, newFakeStore(), "GET", "/records/999", "")
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"запись не найдена","success":false}` {
+		t.Errorf("тело = %s", got)
 	}
 }
 
