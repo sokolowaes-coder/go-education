@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: go_education
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./migrations/000001_create_records.up.sql:/docker-entrypoint-initdb.d/000001_create_records.up.sql:ro
+
+volumes:
+  pgdata:
